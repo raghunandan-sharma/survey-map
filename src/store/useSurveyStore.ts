@@ -7,6 +7,7 @@ import {
   calculateAllPaths,
 } from "../engine/graphBuilder";
 import _ from "lodash";
+import { readableCondition } from "../utils/logicHelpers";
 
 interface SurveyStore {
   data: any[];
@@ -28,14 +29,6 @@ interface SurveyStore {
   activePathIndex: number | null; // null means "All Paths"
   setActivePath: (index: number | null) => void;
 }
-
-const readableCondition = (node: any): string => {
-  if (!node) return "";
-  if (node.type === "leaf") {
-    return `${node.questionId} ${node.operator} ${node.value || node.path}`;
-  }
-  return "Complex Logic";
-};
 
 export const useSurveyStore = create<SurveyStore>()(
   devtools((set, get) => ({

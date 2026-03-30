@@ -7,6 +7,7 @@ interface QuestionNodeData {
   type: string;
   text?: string;
   hasLogic?: boolean;
+  logicText?: string; // Add the string field here
   sectionName?: string;
   isInLoop?: boolean;
 }
@@ -15,19 +16,17 @@ const QuestionNode = ({ data }: { data: QuestionNodeData }) => {
   const isScreener = data.sectionName === "Screener";
 
   const base =
-    "relative rounded-md border-2 shadow-sm px-3 py-2 text-xs min-w-[170px] transition-all";
+    "relative rounded-md border-2 shadow-sm px-3 py-2 text-xs min-w-[170px] max-w-[240px]"; // Added max-width for long logic strings
 
   const screenerStyle = "bg-sky-50 border-sky-800";
   const mainStyle = "bg-lime-50 border-lime-800";
-
-  // Removed the thick blue ring. Subtle logic styling handled via text below.
-  const logicStyle = data.hasLogic ? "border-blue-300" : "";
+  const logicHighlight = data.hasLogic ? "border-blue-300" : "";
   const loopStyle = data.isInLoop ? "border-dashed border-orange-500" : "";
 
   const nodeStyle = `
     ${base}
     ${isScreener ? screenerStyle : mainStyle}
-    ${logicStyle}
+    ${logicHighlight}
     ${loopStyle}
   `;
 
@@ -88,10 +87,10 @@ const QuestionNode = ({ data }: { data: QuestionNodeData }) => {
           </div>
         )}
 
-        {/* Small badge to indicate it's a branch, rather than a jarring border highlight */}
-        {data.hasLogic && (
-          <div className="text-[9px] text-blue-600 font-medium">
-            Depends on Logic
+        {/* Instead of generic text, we render the actual condition */}
+        {data.hasLogic && data.logicText && (
+          <div className="mt-1 p-1 bg-blue-50/50 rounded text-[9px] text-blue-700 font-medium leading-tight">
+            {data.logicText}
           </div>
         )}
 
