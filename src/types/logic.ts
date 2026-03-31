@@ -8,7 +8,6 @@ export enum ComparisonOperator {
   SELECTED = "SELECTED", // Equivalent to '==' for stubs
   NOT_SELECTED = "NOT_SELECTED", // Equivalent to '!=' or 'NOT'
 
-  // Numeric Comparisons
   GT = "GT", // >
   LT = "LT", // <
   GTE = "GTE", // >=
@@ -17,6 +16,17 @@ export enum ComparisonOperator {
   // Multi-select Logic
   IN = "IN", // Any of these selected
   ALL = "ALL", // All of these selected
+}
+
+export type BlockType = "Page" | "Section" | "Subsection" | "Loop";
+
+export interface SurveyBlock {
+  id: string; // e.g., "page_202853"
+  type: BlockType;
+  name: string;
+  firstQuestionId: string | null;
+  lastQuestionId: string | null;
+  logic?: QuestionLogic;
 }
 
 export interface Question {
@@ -30,10 +40,9 @@ export interface Question {
   columns: string[];
   listOrder: number;
 
+  parentBlocks: string[];
+
   isInLoop?: boolean;
-  loopId?: string | null;
-  isEndOfLoop?: boolean;
-  loopReturnTarget?: string | null;
   sectionName?: string;
 }
 

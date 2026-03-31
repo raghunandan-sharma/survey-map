@@ -1,4 +1,61 @@
-import { LogicNode } from "../types/logic";
+import {
+  Question,
+  SurveyBlock,
+  QuestionLogic,
+  LogicNode,
+  LogicBranch,
+  LogicalOperator,
+} from "../types/logic";
+
+export function resolveEffectiveLogic(
+  targetQuestionId: string,
+  refinedQuestions: Question[],
+  blocks: Record<string, SurveyBlock>,
+  logicMap: Record<string, QuestionLogic>
+): QuestionLogic {
+  // Fix 1: Ensure both IDs are compared as strings to avoid number vs string overlap errors
+  const targetQuestion = refinedQuestions.find(
+    (question) => question.id.toString() === targetQuestionId.toString()
+  );
+
+  if (!targetQuestion) return {};
+
+  const inheritedConditions: LogicNode[] = [];
+
+  // 1. Traverse up the tree and gather Block-level logic (Pages, Sections, Loops)
+  targetQuestion.parentBlocks.forEach((blockId) => {
+    const blockLogic = logicMap[blockId]?.show;
+    if (blockLogic) {
+      inheritedConditions.push(blockLogic);
+    }
+  });
+
+  // 2. Gather Question-level logic
+  const questionOwnLogic = logicMap[targetQuestionId]?.show;
+  if (questionOwnLogic) {
+    inheritedConditions.push(questionOwnLogic);
+  }
+
+  // 3. Merge them securely
+  const terminateLogic = logicMap[targetQuestionId]?.terminate;
+
+  if (inheritedConditions.length === 0) {
+    return { show: null, terminate: terminateLogic };
+  }
+
+  if (inheritedConditions.length === 1) {
+    return { show: inheritedConditions[0], terminate: terminateLogic };
+  }
+
+  // If there are multiple conditions, we wrap them in a master "AND" branch
+  const mergedShowLogic: LogicBranch = {
+    type: "branch",
+    operator: LogicalOperator.AND,
+    children: inheritedConditions,
+  };
+
+  return { show: mergedShowLogic, terminate: terminateLogic };
+}
 
 export const readableCondition = (
   node: LogicNode | null | undefined

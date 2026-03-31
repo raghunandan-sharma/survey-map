@@ -1,5 +1,10 @@
 import { Node, Edge } from "reactflow";
-import { Question, QuestionLogic, LoopBlock, LogicNode } from "../types/logic";
+import {
+  Question,
+  QuestionLogic,
+  SurveyBlock,
+  LogicNode,
+} from "../types/logic";
 
 // ============================================================================
 // UTILITIES
@@ -13,7 +18,7 @@ const extractAllParentIds = (
   if (node.type === "leaf" && node.questionId) {
     ids.add(node.questionId.toString());
   } else if (node.type === "branch" && node.children) {
-    node.children.forEach((c) => extractAllParentIds(c, ids));
+    node.children.forEach((child) => extractAllParentIds(child, ids));
   }
   return Array.from(ids);
 };
@@ -23,75 +28,85 @@ const extractAllParentIds = (
 // ============================================================================
 
 function buildPathAdjacencyList(nodes: Node[], edges: Edge[]) {
-  const adjList: Record<string, string[]> = {};
-  const inDegree: Record<string, number> = {};
+  const adjacencyList: Record<string, string[]> = {};
+  const inDegreeTracker: Record<string, number> = {};
 
-  nodes.forEach((n) => {
-    if (!n.id.startsWith("TERM-")) {
-      adjList[n.id] = [];
-      inDegree[n.id] = 0;
+  nodes.forEach((node) => {
+    if (!node.id.startsWith("TERM-")) {
+      adjacencyList[node.id] = [];
+      inDegreeTracker[node.id] = 0;
     }
   });
 
-  edges.forEach((e) => {
+  edges.forEach((edge) => {
     if (
-      e.source &&
-      e.target &&
-      adjList[e.source] &&
-      !e.target.startsWith("TERM-") &&
-      !e.id.startsWith("loop-") &&
-      !e.id.startsWith("ld-logic-")
+      edge.source &&
+      edge.target &&
+      adjacencyList[edge.source] &&
+      !edge.target.startsWith("TERM-") &&
+      !edge.id.startsWith("loop-") &&
+      !edge.id.startsWith("ld-logic-")
     ) {
-      if (!adjList[e.source].includes(e.target)) {
-        adjList[e.source].push(e.target);
-        if (inDegree[e.target] !== undefined) inDegree[e.target]++;
+      if (!adjacencyList[edge.source].includes(edge.target)) {
+        adjacencyList[edge.source].push(edge.target);
+        if (inDegreeTracker[edge.target] !== undefined) {
+          inDegreeTracker[edge.target]++;
+        }
       }
     }
   });
 
-  return { adjList, inDegree };
+  return { adjacencyList, inDegreeTracker };
 }
 
 function findPathRoots(
-  adjList: Record<string, string[]>,
-  inDegree: Record<string, number>
+  adjacencyList: Record<string, string[]>,
+  inDegreeTracker: Record<string, number>
 ): string[] {
-  const roots = Object.keys(inDegree).filter((id) => inDegree[id] === 0);
-  if (roots.length === 0 && Object.keys(adjList).length > 0) {
-    roots.push(Object.keys(adjList)[0]);
+  const rootNodes = Object.keys(inDegreeTracker).filter(
+    (id) => inDegreeTracker[id] === 0
+  );
+  if (rootNodes.length === 0 && Object.keys(adjacencyList).length > 0) {
+    rootNodes.push(Object.keys(adjacencyList)[0]);
   }
-  return roots;
+  return rootNodes;
 }
 
 function extractPathsUsingDFS(
-  roots: string[],
-  adjList: Record<string, string[]>
+  rootNodes: string[],
+  adjacencyList: Record<string, string[]>
 ): string[][] {
-  const paths: string[][] = [];
+  const validPaths: string[][] = [];
 
-  function dfs(current: string, currentPath: string[]) {
-    const nextNodes = adjList[current];
+  function performDepthFirstSearch(
+    currentNodeId: string,
+    currentPath: string[]
+  ) {
+    const nextNodeIds = adjacencyList[currentNodeId];
 
-    if (!nextNodes || nextNodes.length === 0) {
-      paths.push([...currentPath]);
+    if (!nextNodeIds || nextNodeIds.length === 0) {
+      validPaths.push([...currentPath]);
       return;
     }
 
-    nextNodes.forEach((next) => {
-      if (!currentPath.includes(next)) {
-        dfs(next, [...currentPath, next]);
+    nextNodeIds.forEach((nextNodeId) => {
+      if (!currentPath.includes(nextNodeId)) {
+        performDepthFirstSearch(nextNodeId, [...currentPath, nextNodeId]);
       }
     });
   }
 
-  roots.forEach((r) => dfs(r, [r]));
-  return paths;
+  rootNodes.forEach((rootId) => performDepthFirstSearch(rootId, [rootId]));
+  return validPaths;
 }
 
 export function calculateAllPaths(nodes: Node[], edges: Edge[]): string[][] {
-  const { adjList, inDegree } = buildPathAdjacencyList(nodes, edges);
-  const roots = findPathRoots(adjList, inDegree);
-  return extractPathsUsingDFS(roots, adjList);
+  const { adjacencyList, inDegreeTracker } = buildPathAdjacencyList(
+    nodes,
+    edges
+  );
+  const rootNodes = findPathRoots(adjacencyList, inDegreeTracker);
+  return extractPathsUsingDFS(rootNodes, adjacencyList);
 }
 
 // ============================================================================
@@ -102,158 +117,176 @@ function analyzeDependencies(
   refinedQuestions: Question[],
   logicMap: Record<string, QuestionLogic>
 ) {
-  const branchChildren: Record<string, string[]> = {};
-  const isBranchChild = new Set<string>();
+  const branchChildrenMap: Record<string, string[]> = {};
+  const branchChildSet = new Set<string>();
   const longDistanceDependencies: { source: string; target: string }[] = [];
 
-  refinedQuestions.forEach((q, currentIndex) => {
-    const qId = q.id.toString();
-    const allParents = extractAllParentIds(logicMap[qId]?.show);
+  refinedQuestions.forEach((currentQuestion, currentIndex) => {
+    const questionId = currentQuestion.id.toString();
+    const allParentIds = extractAllParentIds(logicMap[questionId]?.show);
 
-    if (allParents.length > 0) {
-      const parentInfos = allParents
-        .map((pId) => ({
-          id: pId,
-          index: refinedQuestions.findIndex((rq) => rq.id.toString() === pId),
+    if (allParentIds.length > 0) {
+      const parentInformationList = allParentIds
+        .map((parentId) => ({
+          id: parentId,
+          index: refinedQuestions.findIndex(
+            (question) => question.id.toString() === parentId
+          ),
         }))
-        .filter((p) => p.index !== -1)
+        .filter((parentInfo) => parentInfo.index !== -1)
         .sort((a, b) => b.index - a.index);
 
-      if (parentInfos.length > 0) {
-        const primaryParent = parentInfos[0];
-        let hasUnconditionalBetween = false;
+      if (parentInformationList.length > 0) {
+        const primaryParent = parentInformationList[0];
+        let hasUnconditionalQuestionBetween = false;
 
         for (let i = primaryParent.index + 1; i < currentIndex; i++) {
-          const middleId = refinedQuestions[i].id.toString();
-          const middleParents = extractAllParentIds(logicMap[middleId]?.show);
-          if (middleParents.length === 0) {
-            hasUnconditionalBetween = true;
+          const middleQuestionId = refinedQuestions[i].id.toString();
+          const middleQuestionParents = extractAllParentIds(
+            logicMap[middleQuestionId]?.show
+          );
+
+          if (middleQuestionParents.length === 0) {
+            hasUnconditionalQuestionBetween = true;
             break;
           }
         }
 
-        if (hasUnconditionalBetween) {
+        if (hasUnconditionalQuestionBetween) {
           longDistanceDependencies.push({
             source: primaryParent.id,
-            target: qId,
+            target: questionId,
           });
         } else {
-          if (!branchChildren[primaryParent.id])
-            branchChildren[primaryParent.id] = [];
-          branchChildren[primaryParent.id].push(qId);
-          isBranchChild.add(qId);
+          if (!branchChildrenMap[primaryParent.id])
+            branchChildrenMap[primaryParent.id] = [];
+          branchChildrenMap[primaryParent.id].push(questionId);
+          branchChildSet.add(questionId);
         }
 
-        for (let i = 1; i < parentInfos.length; i++) {
+        for (let i = 1; i < parentInformationList.length; i++) {
           longDistanceDependencies.push({
-            source: parentInfos[i].id,
-            target: qId,
+            source: parentInformationList[i].id,
+            target: questionId,
           });
         }
       }
     }
   });
 
-  return { branchChildren, isBranchChild, longDistanceDependencies };
+  return { branchChildrenMap, branchChildSet, longDistanceDependencies };
 }
 
 function calculatePositionsAndBaseEdges(
   refinedQuestions: Question[],
-  branchChildren: Record<string, string[]>,
-  isBranchChild: Set<string>,
+  branchChildrenMap: Record<string, string[]>,
+  branchChildSet: Set<string>,
   config: {
-    MAX_NODES: number;
-    X_SPACE: number;
-    Y_SPACE: number;
-    ROW_SPACE: number;
+    maxNodesPerLevel: number;
+    horizontalSpacing: number;
+    verticalBranchSpacing: number;
+    verticalRowSpacing: number;
   }
 ) {
-  const positions: Record<string, { x: number; y: number }> = {};
-  const edges: Edge[] = [];
+  const calculatedPositions: Record<string, { x: number; y: number }> = {};
+  const generatedEdges: Edge[] = [];
 
-  let curXIndex = 0;
-  let currentYPixel = 0;
-  let dir = 1;
+  let currentHorizontalIndex = 0;
+  let currentVerticalPixel = 0;
+  let snakeDirection = 1;
 
-  let previousTrunkId: string | null = null;
-  let prevPos: { x: number; y: number } | null = null;
-  let previousLeaves: string[] = [];
+  let previousTrunkNodeId: string | null = null;
+  let previousTrunkPosition: { x: number; y: number } | null = null;
+  let previousConvergingLeaves: string[] = [];
 
-  const getHandles = (
-    fromPos: { x: number; y: number },
-    toPos: { x: number; y: number }
+  const getEdgeHandles = (
+    fromPosition: { x: number; y: number },
+    toPosition: { x: number; y: number }
   ) => {
-    if (toPos.y > fromPos.y) return { s: "bottom-s", t: "top-t" };
-    if (toPos.x > fromPos.x) return { s: "right-s", t: "left-t" };
-    return { s: "left-s", t: "right-t" };
+    if (toPosition.y > fromPosition.y)
+      return { sourceHandle: "bottom-s", targetHandle: "top-t" };
+    if (toPosition.x > fromPosition.x)
+      return { sourceHandle: "right-s", targetHandle: "left-t" };
+    return { sourceHandle: "left-s", targetHandle: "right-t" };
   };
 
-  refinedQuestions.forEach((q) => {
-    const qId = q.id.toString();
+  refinedQuestions.forEach((currentQuestion) => {
+    const questionId = currentQuestion.id.toString();
 
-    // Only process main trunk nodes in this top-level loop
-    if (isBranchChild.has(qId)) return;
+    if (branchChildSet.has(questionId)) return;
 
-    const currentPos = { x: curXIndex * config.X_SPACE, y: currentYPixel };
-    positions[qId] = currentPos;
+    const currentPosition = {
+      x: currentHorizontalIndex * config.horizontalSpacing,
+      y: currentVerticalPixel,
+    };
+    calculatedPositions[questionId] = currentPosition;
 
-    // Connect Trunk to previous Convergence Leaves (e.g., DT1 to DV)
-    if (previousLeaves.length > 0) {
-      previousLeaves.forEach((leafId) => {
-        edges.push({
-          id: `seq-${leafId}-${qId}`,
+    // Connect previous leaves back to this new trunk node
+    if (previousConvergingLeaves.length > 0) {
+      previousConvergingLeaves.forEach((leafId) => {
+        generatedEdges.push({
+          id: `seq-${leafId}-${questionId}`,
           source: leafId,
-          target: qId,
+          target: questionId,
           sourceHandle: "bottom-s",
           targetHandle: "top-t",
-          type: "smoothstep",
+          type: "step", // Changed to "step" so parallel converging lines perfectly overlap into one single line
           style: { stroke: "#9ca3af", strokeWidth: 2 },
         });
       });
-    } else if (previousTrunkId && prevPos) {
-      const handles = getHandles(prevPos, currentPos);
-      edges.push({
-        id: `seq-${previousTrunkId}-${qId}`,
-        source: previousTrunkId,
-        target: qId,
-        sourceHandle: handles.s,
-        targetHandle: handles.t,
+    } else if (previousTrunkNodeId && previousTrunkPosition) {
+      const handles = getEdgeHandles(previousTrunkPosition, currentPosition);
+      generatedEdges.push({
+        id: `seq-${previousTrunkNodeId}-${questionId}`,
+        source: previousTrunkNodeId,
+        target: questionId,
+        sourceHandle: handles.sourceHandle,
+        targetHandle: handles.targetHandle,
         type: "smoothstep",
         style: { stroke: "#9ca3af", strokeWidth: 2 },
       });
     }
 
-    const branches = branchChildren[qId] || [];
+    const childBranches = branchChildrenMap[questionId] || [];
 
-    if (branches.length > 0) {
-      let maxClusterY = currentYPixel;
+    if (childBranches.length > 0) {
+      let maximumClusterVerticalPixel = currentVerticalPixel;
       let currentClusterLeaves: string[] = [];
 
-      // THE FIX: Recursive function to deeply place all nested branches (e.g., S6 -> S8 -> DT1)
       function placeBranchesRecursively(
-        pId: string,
-        pPos: { x: number; y: number }
+        parentId: string,
+        parentPosition: { x: number; y: number }
       ) {
-        const children = branchChildren[pId] || [];
+        const nestedChildren = branchChildrenMap[parentId] || [];
 
-        // If it has no children, it is a dead end (leaf). Mark it for convergence!
-        if (children.length === 0) {
-          currentClusterLeaves.push(pId);
-          maxClusterY = Math.max(maxClusterY, pPos.y);
+        if (nestedChildren.length === 0) {
+          currentClusterLeaves.push(parentId);
+          maximumClusterVerticalPixel = Math.max(
+            maximumClusterVerticalPixel,
+            parentPosition.y
+          );
           return;
         }
 
-        const bY = pPos.y + config.Y_SPACE;
-        const tWidth = (children.length - 1) * config.X_SPACE;
-        const sX = Math.max(0, pPos.x - tWidth / 2);
+        const branchVerticalPixel =
+          parentPosition.y + config.verticalBranchSpacing;
+        const totalBranchWidth =
+          (nestedChildren.length - 1) * config.horizontalSpacing;
+        const startHorizontalPixel = Math.max(
+          0,
+          parentPosition.x - totalBranchWidth / 2
+        );
 
-        children.forEach((childId, idx) => {
-          const cPos = { x: sX + idx * config.X_SPACE, y: bY };
-          positions[childId] = cPos;
+        nestedChildren.forEach((childId, index) => {
+          const childPosition = {
+            x: startHorizontalPixel + index * config.horizontalSpacing,
+            y: branchVerticalPixel,
+          };
+          calculatedPositions[childId] = childPosition;
 
-          edges.push({
-            id: `branch-${pId}-${childId}`,
-            source: pId,
+          generatedEdges.push({
+            id: `branch-${parentId}-${childId}`,
+            source: parentId,
             target: childId,
             sourceHandle: "bottom-s",
             targetHandle: "top-t",
@@ -262,150 +295,150 @@ function calculatePositionsAndBaseEdges(
             style: { stroke: "#3b82f6", strokeWidth: 2 },
           });
 
-          placeBranchesRecursively(childId, cPos); // Recurse deeper!
+          placeBranchesRecursively(childId, childPosition);
         });
       }
 
-      // Trigger recursion for the first level of branches
-      const branchY = currentYPixel + config.Y_SPACE;
-      const totalWidth = (branches.length - 1) * config.X_SPACE;
-      const startX = Math.max(0, currentPos.x - totalWidth / 2);
+      const topLevelBranchVerticalPixel =
+        currentVerticalPixel + config.verticalBranchSpacing;
+      const topLevelTotalWidth =
+        (childBranches.length - 1) * config.horizontalSpacing;
+      const topLevelStartHorizontalPixel = Math.max(
+        0,
+        currentPosition.x - topLevelTotalWidth / 2
+      );
 
-      branches.forEach((bId, idx) => {
-        const bPos = { x: startX + idx * config.X_SPACE, y: branchY };
-        positions[bId] = bPos;
-        edges.push({
-          id: `branch-${qId}-${bId}`,
-          source: qId,
-          target: bId,
+      childBranches.forEach((branchId, index) => {
+        const branchPosition = {
+          x: topLevelStartHorizontalPixel + index * config.horizontalSpacing,
+          y: topLevelBranchVerticalPixel,
+        };
+        calculatedPositions[branchId] = branchPosition;
+
+        generatedEdges.push({
+          id: `branch-${questionId}-${branchId}`,
+          source: questionId,
+          target: branchId,
           sourceHandle: "bottom-s",
           targetHandle: "top-t",
           type: "smoothstep",
           animated: true,
           style: { stroke: "#3b82f6", strokeWidth: 2 },
         });
-        placeBranchesRecursively(bId, bPos);
+
+        placeBranchesRecursively(branchId, branchPosition);
       });
 
-      // Break the snake path, skip down below the deepest nested branch, and reset
-      currentYPixel = maxClusterY + config.ROW_SPACE;
-      curXIndex = 0;
-      dir = 1;
+      currentVerticalPixel =
+        maximumClusterVerticalPixel + config.verticalRowSpacing;
+      currentHorizontalIndex = 0;
+      snakeDirection = 1;
 
-      previousLeaves = currentClusterLeaves; // The leaves will converge to the next Trunk
-      previousTrunkId = qId;
-      prevPos = currentPos;
+      previousConvergingLeaves = currentClusterLeaves;
+      previousTrunkNodeId = questionId;
+      previousTrunkPosition = currentPosition;
     } else {
-      // Standard snake pagination wrap
-      if (dir === 1) {
-        if (curXIndex >= config.MAX_NODES - 1) {
-          currentYPixel += config.ROW_SPACE;
-          dir = -1;
+      if (snakeDirection === 1) {
+        if (currentHorizontalIndex >= config.maxNodesPerLevel - 1) {
+          currentVerticalPixel += config.verticalRowSpacing;
+          snakeDirection = -1;
         } else {
-          curXIndex++;
+          currentHorizontalIndex++;
         }
       } else {
-        if (curXIndex <= 0) {
-          currentYPixel += config.ROW_SPACE;
-          dir = 1;
+        if (currentHorizontalIndex <= 0) {
+          currentVerticalPixel += config.verticalRowSpacing;
+          snakeDirection = 1;
         } else {
-          curXIndex--;
+          currentHorizontalIndex--;
         }
       }
 
-      previousLeaves = [];
-      previousTrunkId = qId;
-      prevPos = currentPos;
+      previousConvergingLeaves = [];
+      previousTrunkNodeId = questionId;
+      previousTrunkPosition = currentPosition;
     }
   });
 
-  return { positions, baseEdges: edges };
+  return { calculatedPositions, generatedEdges };
 }
 
 function createReactFlowNodesAndTerminations(
   refinedQuestions: Question[],
-  positions: Record<string, { x: number; y: number }>,
+  calculatedPositions: Record<string, { x: number; y: number }>,
   logicMap: Record<string, QuestionLogic>,
-  loopBlocks: LoopBlock[],
+  blocks: Record<string, SurveyBlock>,
   readableCondition: (node: LogicNode | null | undefined) => string
 ) {
-  const nodes: Node[] = [];
+  const reactFlowNodes: Node[] = [];
   const terminationEdges: Edge[] = [];
 
-  refinedQuestions.forEach((q) => {
-    const qId = q.id.toString();
-    const pos = positions[qId];
-    if (!pos) return;
+  refinedQuestions.forEach((question) => {
+    const questionId = question.id.toString();
+    const position = calculatedPositions[questionId];
+    if (!position) return;
 
-    const logic = logicMap[qId];
-    const isInLoop = loopBlocks.some((loop) => {
-      const startIdx = refinedQuestions.findIndex(
-        (rq) => rq.id.toString() === loop.startQuestionId
-      );
-      const endIdx = refinedQuestions.findIndex(
-        (rq) => rq.id.toString() === loop.endQuestionId
-      );
-      const qIdx = refinedQuestions.findIndex((rq) => rq.id.toString() === qId);
-      return qIdx >= startIdx && qIdx <= endIdx;
-    });
+    const logic = logicMap[questionId];
+    const isQuestionInLoop = question.parentBlocks.some(
+      (blockId) => blocks[blockId]?.type === "Loop"
+    );
 
-    // Main Question Node
-    nodes.push({
-      id: qId,
+    reactFlowNodes.push({
+      id: questionId,
       type: "questionNode",
-      position: pos,
+      position: position,
       data: {
-        label: q.name,
-        fullName: q.fullName,
-        type: q.type,
-        sectionName: q.sectionName,
+        label: question.name,
+        fullName: question.fullName,
+        type: question.type,
+        sectionName: question.sectionName,
         hasLogic: !!logic?.show,
         logicText: logic?.show ? readableCondition(logic.show) : undefined,
-        isInLoop,
+        isInLoop: isQuestionInLoop,
       },
-      className: isInLoop
+      className: isQuestionInLoop
         ? "border-2 border-dashed border-orange-500 bg-orange-50"
         : "",
     });
 
-    // Termination Node
+    // Pushed Terminate Node further right and down so it doesn't crowd the parent node
     if (logic?.terminate) {
-      const termId = `TERM-${qId}`;
-      nodes.push({
-        id: termId,
+      const terminationId = `TERM-${questionId}`;
+      reactFlowNodes.push({
+        id: terminationId,
         type: "output",
-        position: { x: pos.x + 130, y: pos.y + 80 },
+        position: { x: position.x + 200, y: position.y + 90 },
         data: { label: "🛑 TERMINATE" },
         className:
           "bg-red-50 border border-red-500 text-red-700 text-xs w-[110px] text-center rounded z-10",
       });
 
       terminationEdges.push({
-        id: `e-term-${qId}`,
-        source: qId,
-        target: termId,
-        sourceHandle: "bottom-s",
-        targetHandle: "left-t",
-        type: "smoothstep",
+        id: `e-term-${questionId}`,
+        source: questionId,
+        target: terminationId,
+        sourceHandle: "right-s", // Out the right side...
+        targetHandle: "top-t", // ...into the top, preventing overlap
+        type: "step", // Strict angles look cleaner for termination jumps
         style: { stroke: "#ef4444", strokeWidth: 2, strokeDasharray: "4 4" },
       });
     }
   });
 
-  return { mappedNodes: nodes, terminationEdges };
+  return { mappedNodes: reactFlowNodes, terminationEdges };
 }
 
 function createSpecialEdges(
   longDistanceDependencies: { source: string; target: string }[],
-  loopBlocks: LoopBlock[]
+  blocks: Record<string, SurveyBlock>
 ) {
-  const edges: Edge[] = [];
+  const specialEdges: Edge[] = [];
 
-  longDistanceDependencies.forEach((dep) => {
-    edges.push({
-      id: `ld-logic-${dep.source}-${dep.target}`,
-      source: dep.source,
-      target: dep.target,
+  longDistanceDependencies.forEach((dependency) => {
+    specialEdges.push({
+      id: `ld-logic-${dependency.source}-${dependency.target}`,
+      source: dependency.source,
+      target: dependency.target,
       sourceHandle: "bottom-s",
       targetHandle: "top-t",
       type: "smoothstep",
@@ -419,70 +452,72 @@ function createSpecialEdges(
     });
   });
 
-  loopBlocks.forEach((loop) => {
-    edges.push({
+  const loopBlocksArray = Object.values(blocks).filter(
+    (block) => block.type === "Loop"
+  );
+
+  loopBlocksArray.forEach((loop) => {
+    if (!loop.firstQuestionId || !loop.lastQuestionId) return;
+
+    specialEdges.push({
       id: `loop-${loop.id}`,
-      source: loop.endQuestionId,
-      target: loop.startQuestionId,
-      label: "Next Iteration",
+      source: loop.lastQuestionId,
+      target: loop.firstQuestionId,
       type: "step",
       animated: true,
       style: { stroke: "#f97316", strokeWidth: 3, strokeDasharray: "5 5" },
-      labelStyle: {
-        fill: "#c2410c",
-        fontWeight: "bold",
-        fontSize: 12,
-        background: "#fff",
-      },
-      sourceHandle: "left-s",
-      targetHandle: "left-t",
+
+      // CHANGED THESE TWO LINES TO TOP-TO-TOP
+      sourceHandle: "top-s",
+      targetHandle: "top-t",
     });
   });
 
-  return edges;
+  return specialEdges;
 }
 
 // ============================================================================
-// MAIN EXPORT (ORCHESTRATOR)
+// MAIN EXPORT
 // ============================================================================
 
 export function buildGraphLevelLayout(
   refinedQuestions: Question[],
   logicMap: Record<string, QuestionLogic>,
-  loopBlocks: LoopBlock[],
+  blocks: Record<string, SurveyBlock>,
   readableCondition: (node: LogicNode | null | undefined) => string,
-  MAX_NODES_PER_LEVEL = 5,
-  X_SPACING = 320,
-  Y_SPACING = 220,
-  ROW_SPACING = 120
+  maxNodesPerLevel = 5,
+  horizontalSpacing = 320,
+  verticalBranchSpacing = 220,
+  verticalRowSpacing = 120
 ): { nodes: Node[]; edges: Edge[] } {
-  const { branchChildren, isBranchChild, longDistanceDependencies } =
+  const { branchChildrenMap, branchChildSet, longDistanceDependencies } =
     analyzeDependencies(refinedQuestions, logicMap);
 
-  const { positions, baseEdges } = calculatePositionsAndBaseEdges(
-    refinedQuestions,
-    branchChildren,
-    isBranchChild,
-    {
-      MAX_NODES: MAX_NODES_PER_LEVEL,
-      X_SPACE: X_SPACING,
-      Y_SPACE: Y_SPACING,
-      ROW_SPACE: ROW_SPACING,
-    }
-  );
+  const { calculatedPositions, generatedEdges } =
+    calculatePositionsAndBaseEdges(
+      refinedQuestions,
+      branchChildrenMap,
+      branchChildSet,
+      {
+        maxNodesPerLevel,
+        horizontalSpacing,
+        verticalBranchSpacing,
+        verticalRowSpacing,
+      }
+    );
 
   const { mappedNodes, terminationEdges } = createReactFlowNodesAndTerminations(
     refinedQuestions,
-    positions,
+    calculatedPositions,
     logicMap,
-    loopBlocks,
+    blocks,
     readableCondition
   );
 
-  const specialEdges = createSpecialEdges(longDistanceDependencies, loopBlocks);
+  const specialEdges = createSpecialEdges(longDistanceDependencies, blocks);
 
   return {
     nodes: mappedNodes,
-    edges: [...baseEdges, ...terminationEdges, ...specialEdges],
+    edges: [...generatedEdges, ...terminationEdges, ...specialEdges],
   };
 }
